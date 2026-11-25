@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Букет</title>
+<style>
+html, body { margin: 0; height: 100%; background: #38232e; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+</style>
+</head>
+<body>
+<canvas id="c" aria-label="Вращающийся ASCII-букет из нежно-розовых и белых цветов"></canvas>
+<script>
+(() => {
+  const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  const PI = Math.PI, TAU = PI * 2, GA = 2.399963;
+  let seed = 11;
+  const rnd = () => (seed = seed * 16807 % 2147483647) / 2147483647;
+
+  // Символы от тёмного к светлому: 0 гортензия, 1 роза, 2 альстромерия, 3 листья, 4 стебли, 5 лента
+  const RAMPS = [".:+*oO0", ".,;:cs%&@", ".,-~=*%#", "`,;:+=", "|", "=#"].map(s => s.split(''));
+  // Материалы: 0 белый, 1 нежно-розовый, 2 бледно-розовый, 3 насыщенный розовый, 4 зелень, 5 кремово-белый
+  const MATS = [[255,247,250],[246,168,198],[255,212,226],[226,110,152],[84,142,102],[255,232,238]];
+  const L = 10;
+  const pal = [];
+  MATS.forEach(c => { for (let l = 0; l < L; l++) { const f = .22 + .78 * l / (L - 1); pal.push(`rgb(${c.map(v => Math.round(v * f))})`); } });
+
+  // ---------- геометрия ----------
+  const raw = [];
+  const add = (x,y,z,nx,ny,nz,m,k,t,cull) => raw.push(x,y,z,nx,ny,nz,m,k,t,cull ? 1 : 0);
+  const nrm = v => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0]/l, v[1]/l, v[2]/l]; };
+  const cross = (a,b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+  function basis(d) {
+    const h = Math.abs(d[1]) < .9 ? [0,1,0] : [1,0,0];
+    const u = nrm(cross(h, d)); return [u, cross(d, u)];
+  }
+  function mkFrame(pos, d) {
+    const [u, v] = basis(d);
+    return {
+      p: (a,b,c) => [pos[0]+u[0]*a+d[0]*b+v[0]*c, pos[1]+u[1]*a+d[1]*b+v[1]*c, pos[2]+u[2]*a+d[2]*b+v[2]*c],
+      n: (a,b,c) => nrm([u[0]*a+d[0]*b+v[0]*c, u[1]*a+d[1]*b+v[1]*c, u[2]*a+d[2]*b+v[2]*c])
+    };
+  }
+
+  // Гортензия: шар из четырёхлепестковых соцветий
+  function hydrangea(pos, d, s, pink) {
+    const f = mkFrame(pos, d), N = 240;
+    for (let i = 0; i < N; i++) {
+      const y = 1 - 2*(i+.5)/N, r = Math.sqrt(1 - y*y), a = i*GA;
+      const lx = r*Math.cos(a), ly = y, lz = r*Math.sin(a);
+      if (ly < -.3) continue;
+      const j = .9 + .12*rnd(), n = f.n(lx, ly, lz);
+      const c = f.p(lx*s*j, ly*s*.85*j, lz*s*j);
+      const [tu, tv] = basis(n), fs = s*.17;
+      const m = rnd() < pink ? (rnd() < .5 ? 1 : 2) : (rnd() < .8 ? 0 : 5);
+      const tone = .8 + .3*rnd();
+      add(c[0],c[1],c[2], n[0],n[1],n[2], m, 0, tone*1.1, 1);
+      for (let q = 0; q < 4; q++) {
+        const sg = q < 2 ? 1 : -1, w = q % 2 ? tv : tu;
+        add(c[0]+w[0]*fs*sg, c[1]+w[1]*fs*sg, c[2]+w[2]*fs*sg, n[0],n[1],n[2], m, 0, tone*.9, 1);
+      }
+    }
+  }
+
+  // Кустовая чайная роза: спираль лепестков в чаше
+  function rose(pos, d, s, pink) {
+    const f = mkFrame(pos, d), N = 190;
+    for (let i = 0; i < N; i++) {
+      const t = (i+.5)/N, r = s*Math.sqrt(t), a = i*GA;
+      const y = s*.7*(1-t) + s*.25*Math.pow(t, 6), k = 1.3*(r/s);
+      const p = f.p(r*Math.cos(a), y, r*Math.sin(a)), n = f.n(Math.cos(a)*k, 1, Math.sin(a)*k);
+      const tone = .72 + .28*Math.sin(t*22 + a*1.2) + .06*rnd();
+      const m = t < .22 ? 3 : (pink ? (t < .75 ? 1 : 2) : (t < .5 ? 5 : 0));
+      add(p[0],p[1],p[2], n[0],n[1],n[2], m, 1, tone, 1);
+    }
+  }
+
+  // Альстромерия: шесть лепестков-воронка, крапинки в зеве и тычинки
+  function alstro(pos, d, s, pink) {
+    const f = mkFrame(pos, d);
+    for (let k = 0; k < 6; k++) {
+      const outer = k % 2 === 0, a = k*PI/3, ca = Math.cos(a), sa = Math.sin(a), W = s*(outer ? .5 : .36);
+      for (let ui = 0; ui < 11; ui++) {
+        const u = (ui+.5)/11, w = W*(Math.sin(PI*Math.pow(u,.7))*.85 + .15*(1-u));
+        const rho = s*(.1 + .9*u), y = s*.5*Math.pow(u,1.4), slope = .65*Math.pow(u,.4);
+        const n = f.n(-slope*ca, 1, -slope*sa);
+        for (let vi = -2; vi <= 2; vi++) {
+          const v = vi/2, lat = v*w;
+          const p = f.p(ca*rho - sa*lat, y, sa*rho + ca*lat);
+          let m = u < .3 ? 0 : (pink ? (u < .65 ? 2 : 1) : 0);
+          if (u < .6 && Math.abs(v) < .7 && rnd() < .22) m = 3;
+          add(p[0],p[1],p[2], n[0],n[1],n[2], m, 2, .85 + .25*rnd() + (vi === 0 ? .1 : 0), 1);
+        }
+      }
+    }
+    const n = f.n(0,1,0);
+    for (let k = 0; k < 6; k++) {
+      const a = k*PI/3 + .3;
+      for (let j = 1; j <= 5; j++) {
+        const t = j/5, p = f.p(Math.cos(a)*s*.22*t, s*(.15 + .5*t), Math.sin(a)*s*.22*t);
+        add(p[0],p[1],p[2], n[0],n[1],n[2], 3, 2, 1.1, 1);
+      }
+    }
+  }
+
+  function seg(a, b, n) {
+    for (let i = 0; i < n; i++) {
+      const t = i/n;
+      add(a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t, 0,0,1, 4, 4, .9, 0);
+    }
+  }
+  function leaf(o, dir, len, wid) {
+    const t = nrm(cross([0,1,0], dir));
+    let nn = nrm(cross(t, dir)); if (nn[1] < 0) nn = nn.map(v => -v);
+    for (let ui = 1; ui <= 12; ui++) {
+      const u = ui/12, w = wid*Math.sin(PI*Math.pow(u,.65));
+      for (let vi = -2; vi <= 2; vi++) {
+        const v = vi/2;
+        add(o[0] + dir[0]*len*u + t[0]*v*w,
+            o[1] + dir[1]*len*u + t[1]*v*w - .18*u*u*len - .03*Math.abs(v),
+            o[2] + dir[2]*len*u + t[2]*v*w,
+            nn[0],nn[1],nn[2], 4, 3, .75 + .35*rnd() + (vi === 0 ? .15 : 0), 0);
+      }
+    }
+  }
+
+  // ---------- композиция ----------
+  const D = .95, TM = Math.cos(105*PI/180);
+  const types = 'HRARAHRARAHRRAHRARHARA';
+  const N = types.length;
+  for (let i = 0; i < N; i++) {
+    const cosT = 1 - (i+.5)/N*(1-TM), sinT = Math.sqrt(1 - cosT*cosT), phi = i*GA + .6;
+    const pos = [D*sinT*Math.cos(phi), D*cosT*.8 + .1, D*sinT*Math.sin(phi)];
+    const d = nrm([pos[0], pos[1] + .9, pos[2]]);
+    const pink = rnd() < .6 ? 1 : 0, j = .9 + .2*rnd();
+    const ty = types[i];
+    const s = (ty === 'H' ? .32 : ty === 'A' ? .24 : .19) * j;
+    if (ty === 'H') hydrangea(pos, d, s, pink ? .7 : .2);
+    else if (ty === 'R') rose(pos, d, s, pink);
+    else alstro(pos, d, s, pink);
+    // стебель: цветок -> лента -> срез
+    const b = [pos[0]-d[0]*s*.2, pos[1]-d[1]*s*.2, pos[2]-d[2]*s*.2], ph = Math.atan2(pos[2], pos[0]);
+    const K = [.1*Math.cos(ph), -1.05, .1*Math.sin(ph)], E = [.13*Math.cos(ph+.4), -1.65, .13*Math.sin(ph+.4)];
+    seg(b, K, 26); seg(K, E, 14);
+  }
+  // зелень по краю композиции
+  for (let i = 0; i < 10; i++) { const a = i/10*TAU + .3, c = Math.cos(a), s = Math.sin(a); leaf([.55*c,-.15,.55*s], nrm([c,.2,s]), .95, .17); }
+  for (let i = 0; i < 8; i++) { const a = i/8*TAU + .1, c = Math.cos(a), s = Math.sin(a); leaf([.45*c,0,.45*s], nrm([c*.8,.65,s*.8]), .9, .15); }
+  // лента с бантом
+  for (let i = 0; i < 70; i++) {
+    const a = i/70*TAU, c = Math.cos(a), s = Math.sin(a);
+    for (const yy of [-1, -1.05, -1.1]) add(.17*c, yy, .17*s, c, 0, s, 1, 5, .9, 0);
+  }
+  for (const sg of [-1, 1]) {
+    for (let i = 0; i < 30; i++) { const a = i/30*TAU; add(sg*(.14 + .12*Math.cos(a)), -1 + .07*Math.sin(a), .19, 0,0,1, 2, 5, 1, 0); }
+    for (let j = 0; j < 10; j++) { const t = j/10; add(sg*(.03 + .1*t), -1.07 - .35*t, .19 + .01*t, 0,0,1, 2, 5, .85, 0); }
+  }
+  const P = new Float32Array(raw), YC = -.25;
+
+  // ---------- рендер ----------
+  const LX = -.45, LY = .55, LZ = .7, ll = Math.hypot(LX, LY, LZ), lx = LX/ll, ly = LY/ll, lz = LZ/ll;
+  let W, H, dpr, fs, cw, ch, cols, rows, zb, cellB, cellC, cellK, scale, cx, cy;
+  const lists = pal.map(() => []);
+
+  function resize() {
+    W = innerWidth; H = innerHeight; dpr = Math.min(devicePixelRatio || 1, 2);
+    cv.width = W*dpr; cv.height = H*dpr;
+    fs = Math.max(6.5, Math.min(14, Math.min(W, H*.85)/70));
+    cw = fs*.6; ch = fs; cols = Math.ceil(W/cw); rows = Math.ceil(H/ch);
+    zb = new Float32Array(cols*rows); cellB = new Int16Array(cols*rows);
+    cellC = new Uint8Array(cols*rows); cellK = new Uint8Array(cols*rows);
+    scale = Math.min(W/3.3, H/3.4); cx = W/2; cy = H/2;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.font = fs + 'px "Courier New", Menlo, Consolas, monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  }
+  addEventListener('resize', resize); resize();
+
+  let yaw = 0, drag = false, lastX = 0, prev = 0, last = 0;
+  cv.addEventListener('pointerdown', e => { drag = true; lastX = e.clientX; cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener('pointermove', e => { if (drag) { yaw += (e.clientX - lastX)*.008; lastX = e.clientX; } });
+  const up = () => { drag = false; };
+  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+
+  function draw(now) {
+    requestAnimationFrame(draw);
+    if (now - last < 30) return;
+    last = now;
+    const dt = Math.min((now - prev)/1000, .1); prev = now;
+    if (!drag) yaw += dt*.4;
+    const t = now/1000, tilt = .2 + .03*Math.sin(t*.6);
+    const cY = Math.cos(yaw), sY = Math.sin(yaw), cX = Math.cos(tilt), sX = Math.sin(tilt);
+
+    zb.fill(-1e9); cellB.fill(-1);
+    for (let i = 0; i < P.length; i += 10) {
+      const x = P[i], y = P[i+1] - YC, z = P[i+2];
+      let nx = P[i+3], ny = P[i+4], nz = P[i+5];
+      const x1 = x*cY + z*sY, z1 = -x*sY + z*cY;
+      const y2 = y*cX - z1*sX, z2 = y*sX + z1*cX;
+      const nx1 = nx*cY + nz*sY, nz1 = -nx*sY + nz*cY;
+      nx = nx1; const ny2 = ny*cX - nz1*sX; nz = ny*sX + nz1*cX; ny = ny2;
+      if (nz < 0) { if (P[i+9]) { if (nz < -.05) continue; } else { nx = -nx; ny = -ny; nz = -nz; } }
+      const p = 1/(1 - z2*.1);
+      const col = (cx + x1*scale*p)/cw | 0, row = (cy - y2*scale*p)/ch | 0;
+      if (col < 0 || col >= cols || row < 0 || row >= rows) continue;
+      const idx = row*cols + col;
+      if (z2 <= zb[idx]) continue;
+      zb[idx] = z2;
+      const k = P[i+7], tone = P[i+8];
+      let b;
+      if (k === 4) b = .5*tone;
+      else { const hl = .5 + .5*(nx*lx + ny*ly + nz*lz); b = (.22 + .78*hl)*tone; }
+      b = b < 0 ? 0 : b > .98 ? .98 : b;
+      cellB[idx] = P[i+6]*L + Math.round(b*(L-1));
+      cellK[idx] = k;
+      cellC[idx] = Math.round(b*(RAMPS[k].length - 1));
+    }
+
+    ctx.fillStyle = '#100D13'; ctx.fillRect(0, 0, W, H);
+    for (let b = 0; b < lists.length; b++) lists[b].length = 0;
+    for (let i = 0; i < cellB.length; i++) if (cellB[i] >= 0) lists[cellB[i]].push(i);
+    for (let b = 0; b < lists.length; b++) {
+      const l = lists[b]; if (!l.length) continue;
+      ctx.fillStyle = pal[b];
+      for (let j = 0; j < l.length; j++) {
+        const i = l[j], r = (i/cols) | 0, c = i - r*cols;
+        ctx.fillText(RAMPS[cellK[i]][cellC[i]], c*cw + cw/2, r*ch + ch/2);
+      }
+    }
+  }
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>
